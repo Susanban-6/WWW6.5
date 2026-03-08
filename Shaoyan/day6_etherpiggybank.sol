@@ -1,62 +1,59 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-contract EtherPiggyBank {
-    address public owner;
-    string public item;
-    uint public auctionEndTime;
-    address private highestBidder; // 当前最高出价者（赢家），设为 private，通过 getWinner 函数获取
-    uint private highestBid;       // 当前最高出价，设为 private，通过 getWinner 函数获取
-    bool public ended;
+contract RealWorldTreasury {
+    // 1. 谁是负责人？
+    address public manager;
+    
+    // 2. 谁是成员 & 3. 存了多少钱？
+    // 用 mapping 建立成员地址到存款金额的映射，这就像是一本电子存折
+    mapping(address => uint256) public memberBalances;
+    mapping(address => bool) public isMember;
 
-    mapping(address => uint) public bids;
-    address[] public bidders;
-
-    // 构造函数：初始化拍卖物品名称以及拍卖持续时间
-    constructor(string memory _item, uint _biddingTime) {
-        owner = msg.sender;
-        item = _item;
-        auctionEndTime = block.timestamp + _biddingTime;
+    // 修饰符：定义规则，只有经理才能执行特定操作
+    modifier onlyManager() {
+        require(msg.sender == manager, "Only manager can perform this");
+        _;
     }
 
-    // 用户出价函数：允许用户提交新的出价
-    function bid(uint amount) external {
-        require(block.timestamp < auctionEndTime, "Auction has already ended");
-        require(amount > 0, "Bid must be greater than 0");
-        require(amount > bids[msg.sender], "New bid must be higher than your previous bid");
-
-        // 如果是第一次出价，则记录为新的竞拍者
-        if (bids[msg.sender] == 0) {
-            bidders.push(msg.sender);
-        }
-
-        // 更新该用户的出价
-        bids[msg.sender] = amount;
-
-        // 如果当前出价高于最高出价，则更新最高出价者和最高出价
-        if (amount > highestBid) {
-            highestBid = amount;
-            highestBidder = msg.sender;
-        }
+    // 初始化：构造函数，部署合约时确定经理
+    constructor() {
+        manager = msg.sender;
     }
 
-    // 在拍卖时间结束后调用该函数以结束拍卖
-    function endAuction() external {
-        require(block.timestamp >= auctionEndTime, "Auction has not ended yet");
-        require(!ended, "拍卖已经结束过一次");
-
-        // 标记拍卖为已结束
-        ended = true;
+    // 添加新成员
+    function addMember(address _member) public onlyManager {
+        require(_member != address(0), "Invalid address");
+        require(!isMember[_member], "Member already exists");
+        require(_member != manager, "Manager is already the boss");
+        
+        isMember[_member] = true;
     }
 
-    // 获取所有参与竞拍的地址列表
-    function getAllBidders() external view returns (address[] memory) {
-        return bidders;
+    // 存款：使用 payable 和 msg.value 接收真正的以太币
+    // 任何人都可以存，但只有成员存入的才会被记录
+    function deposit() public payable {
+        require(isMember[msg.sender], "You are not a member");
+        require(msg.value > 0, "Deposit must be greater than 0");
+        
+        // 更新存折
+        memberBalances[msg.sender] += msg.value;
     }
 
-    // 在拍卖结束后获取最终赢家地址以及其出价金额
-    function getWinner() external view returns (address, uint) {
-        require(ended, "拍卖尚未结束");
-        return (highestBidder, highestBid);
+    // 取钱：将真正的以太币退还给用户
+    function withdraw(uint256 _amount) public {
+        require(memberBalances[msg.sender] >= _amount, "Insufficient funds");
+
+        // 1. 先扣账 (防止重入攻击)
+        memberBalances[msg.sender] -= _amount;
+
+        // 2. 实际转账
+        (bool success, ) = payable(msg.sender).call{value: _amount}("");
+        require(success, "Transfer failed");
+    }
+
+    // 查看当前成员余额
+    function getMyBalance() public view returns (uint256) {
+        return memberBalances[msg.sender];
     }
 }
